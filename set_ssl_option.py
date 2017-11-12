@@ -1,9 +1,9 @@
 #! /usr/bin/env python
 
-import socket
-from OpenSSL import SSL
 import psycopg2
 from config import config
+import pycurl
+import cStringIO
 
 def ssl_option():
 
@@ -18,28 +18,42 @@ def ssl_option():
 			try:
 				cur = conn_sql.cursor()
 				hostname = str(''.join(hostname))
+				#print hostname
+				curl = pycurl.Curl()
+				buff = cStringIO.StringIO()
+				curl.setopt(pycurl.URL, 'https://'+hostname)
+				curl.setopt(pycurl.USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/62.0.3202.75 Safari/537.36')
+				curl.setopt(pycurl.FOLLOWLOCATION, 1)
+				curl.setopt(pycurl.WRITEFUNCTION, buff.write)
+				curl.setopt(pycurl.SSL_VERIFYPEER, 0)
+				curl.setopt(pycurl.SSLVERSION, pycurl.SSLVERSION_TLSv1_0)
+				curl.setopt(pycurl.OPT_CERTINFO, 1)
+				curl.perform()
 
-				context = SSL.Context(SSL.TLSv1_METHOD)
-				sock = socket.socket()
-				sock = SSL.Connection(context, sock)
-				sock.connect((hostname, 443))
-				sock.do_handshake()
-				x509 = sock.get_peer_certificate()
-				x = x509.get_subject()
+				certinfo = curl.getinfo(pycurl.INFO_CERTINFO)
+				certinfo = certinfo[0]
+				certinfo_dict = {}
+				for entry in certinfo:
+					certinfo_dict[entry[0]] = entry[1]
+				#print certinfo_dict['X509v3 Subject Alternative Name']
+				#print certinfo_dict['Expire date']
+				x = certinfo_dict['X509v3 Subject Alternative Name']
 				if hostname in str(x):
 					query = "UPDATE sites_full SET SSL = %s where HOSTNAME = %s"
 					data = ('true', hostname)
 					cur.execute(query, data)
 					conn_sql.commit()
-					sock.close()
 				else:
 					#print hostname + ' ' + str(x)
-					sock.close()
-			except (psycopg2.ProgrammingError, SSL.SysCallError, SSL.Error, socket.error) as e:
+					pass
+			except (psycopg2.ProgrammingError, IndexError) as e:
 				print hostname + ' ' + str(e)
 				pass
-	except psycopg2.ProgrammingError as e:
-		#print e
+			except pycurl.error as e2:
+				print hostname + ' ' + str(e2)
+				pass
+	except psycopg2.ProgrammingError as e3:
+		print e3
 		pass
 	cur.close()
 	conn_sql.close()
